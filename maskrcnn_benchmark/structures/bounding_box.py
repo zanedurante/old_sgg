@@ -20,6 +20,7 @@ class BoxList(object):
         device = bbox.device if isinstance(bbox, torch.Tensor) else torch.device("cpu")
         bbox = torch.as_tensor(bbox, dtype=torch.float32, device=device)
         if bbox.ndimension() != 2:
+            print("BBox:", bbox)
             raise ValueError(
                 "bbox should have 2 dimensions, got {}".format(bbox.ndimension())
             )
@@ -45,6 +46,8 @@ class BoxList(object):
             self.triplet_extra_fields.append(field)
 
     def get_field(self, field):
+        if not field in self.extra_fields.keys():
+            print("ERROR, bounding box only has fields:", self.extra_fields.keys())
         return self.extra_fields[field]
 
     def has_field(self, field):
@@ -230,7 +233,7 @@ class BoxList(object):
             else:
                 bbox.add_field(k, v[item])
         return bbox
-
+            
     def __len__(self):
         return self.bbox.shape[0]
 

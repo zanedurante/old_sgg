@@ -27,6 +27,8 @@ class GroupedBatchSampler(BatchSampler):
                 "sampler should be an instance of "
                 "torch.utils.data.Sampler, but got sampler={}".format(sampler)
             )
+        print("==================USING THIS SAMPLER======================")
+        print(type(sampler))
         self.sampler = sampler
         self.group_ids = torch.as_tensor(group_ids)
         assert self.group_ids.dim() == 1

@@ -48,6 +48,7 @@ class ROIBoxHead(torch.nn.Module):
         # box head specifically for relation prediction model
         ###################################################################
         if self.cfg.MODEL.RELATION_ON:
+            print("RELATION IS ON")
             if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
                 # use ground truth box as proposals
                 proposals = [target.copy_with_fields(["labels", "attributes"]) for target in targets]
@@ -81,14 +82,21 @@ class ROIBoxHead(torch.nn.Module):
         if self.training:
             # Faster R-CNN subsamples during training the proposals with a fixed
             # positive / negative ratio
+            
             with torch.no_grad():
-                proposals = self.samp_processor.subsample(proposals, targets)
-
+                if self.cfg.MODEL.RELATION_ON:
+                    proposals = self.samp_processor.subsample(proposals, targets)
+                else:
+                    proposals = self.loss_evaluator.subsample(proposals, targets)
         # extract features that will be fed to the final classifier. The
         # feature_extractor generally corresponds to the pooler + heads
+        # proposals = [target.copy_with_fields(["labels"]) for target in targets]
         x = self.feature_extractor(features, proposals)
+        
         # final classifier that converts the features into predictions
         class_logits, box_regression = self.predictor(x)
+        proposals = add_predict_logits(proposals, class_logits)
+        
         
         if not self.training:
             x, result = self.post_processor((x, class_logits, box_regression), proposals)
@@ -101,7 +109,7 @@ class ROIBoxHead(torch.nn.Module):
                 result.add_field("features", x.cpu().numpy())
 
             return x, result, {}
-
+        
         loss_classifier, loss_box_reg = self.loss_evaluator([class_logits], [box_regression], proposals)
 
         return x, proposals, dict(loss_classifier=loss_classifier, loss_box_reg=loss_box_reg)

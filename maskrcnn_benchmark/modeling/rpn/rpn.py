@@ -103,6 +103,7 @@ class RPNHead(nn.Module):
             t = F.relu(self.conv(feature))
             logits.append(self.cls_logits(t))
             bbox_reg.append(self.bbox_pred(t))
+                
         return logits, bbox_reg
 
 
@@ -152,7 +153,7 @@ class RPNModule(torch.nn.Module):
             losses (dict[Tensor]): the losses for the model during training. During
                 testing, it is an empty dict.
         """
-        objectness, rpn_box_regression = self.head(features)
+        objectness, rpn_box_regression = self.head(features) # objectness is object logits
         anchors = self.anchor_generator(images, features)
 
         if self.training:

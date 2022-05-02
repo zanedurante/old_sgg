@@ -34,8 +34,8 @@ class FastRCNNSampling(object):
     def match_targets_to_proposals(self, proposal, target):
         match_quality_matrix = boxlist_iou(target, proposal)
         matched_idxs = self.proposal_matcher(match_quality_matrix)
-        # Fast RCNN only need "labels" field for selecting the targets
-        target = target.copy_with_fields(["labels", "attributes"])
+        # Fast RCNN only need "labels" field for selecting the targets, so removing attributes for now
+        target = target.copy_with_fields(["labels"])#, "attributes"])
         # get the targets corresponding GT for each proposal
         # NB: need to clamp the indices because we can have a single
         # GT in the image, and matched_idxs can be -2, which goes
@@ -56,14 +56,14 @@ class FastRCNNSampling(object):
             matched_idxs_per_image = matched_targets.get_field("matched_idxs")
             
             labels_per_image = matched_targets.get_field("labels")
-            attris_per_image = matched_targets.get_field("attributes")
+            #attris_per_image = matched_targets.get_field("attributes")
             labels_per_image = labels_per_image.to(dtype=torch.int64)
-            attris_per_image = attris_per_image.to(dtype=torch.int64)
+            #attris_per_image = attris_per_image.to(dtype=torch.int64)
 
             # Label background (below the low threshold)
             bg_inds = matched_idxs_per_image == Matcher.BELOW_LOW_THRESHOLD
             labels_per_image[bg_inds] = 0
-            attris_per_image[bg_inds,:] = 0
+            #attris_per_image[bg_inds,:] = 0
 
             # Label ignore proposals (between low and high thresholds)
             ignore_inds = matched_idxs_per_image == Matcher.BETWEEN_THRESHOLDS
@@ -75,7 +75,7 @@ class FastRCNNSampling(object):
             )
 
             labels.append(labels_per_image)
-            attributes.append(attris_per_image)
+            #attributes.append(attris_per_image)
             regression_targets.append(regression_targets_per_image)
             matched_idxs.append(matched_idxs_per_image)
 

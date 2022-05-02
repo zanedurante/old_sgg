@@ -27,7 +27,7 @@ from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.logger import setup_logger
 from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
 from maskrcnn_benchmark.utils.metric_logger import MetricLogger
-
+import wandb
 
 # See if we can use apex.DistributedDataParallel instead of the torch default,
 # and enable mixed-precision via apex.amp
@@ -38,18 +38,28 @@ except ImportError:
 
 
 def train(cfg, local_rank, distributed, logger):
+    
+    group_name = str(cfg.SOLVER.SCHEDULE.TYPE) + "_" + str(cfg.SOLVER.BASE_LR)  
+    
+    wandb.init(project="moma-maskrcnn-benchmark", entity="durante", group=group_name)
+    wandb.config = {
+        "learning_rate": cfg.SOLVER.BASE_LR,
+        "schedule type": cfg.SOLVER.SCHEDULE.TYPE,
+    }
+    
     model = build_detection_model(cfg)
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
 
     optimizer = make_optimizer(cfg, model, logger, rl_factor=float(cfg.SOLVER.IMS_PER_BATCH))
     scheduler = make_lr_scheduler(cfg, optimizer)
-
+    
+    
     # Initialize mixed-precision training
     use_mixed_precision = cfg.DTYPE == "float16"
     amp_opt_level = 'O1' if use_mixed_precision else 'O0'
     model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
-
+    
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[local_rank], output_device=local_rank,
@@ -102,8 +112,6 @@ def train(cfg, local_rank, distributed, logger):
         iteration = iteration + 1
         arguments["iteration"] = iteration
 
-        scheduler.step()
-
         images = images.to(device)
         targets = [target.to(device) for target in targets]
 
@@ -114,6 +122,7 @@ def train(cfg, local_rank, distributed, logger):
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = reduce_loss_dict(loss_dict)
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+        wandb.log({"loss": losses_reduced})
         meters.update(loss=losses_reduced, **loss_dict_reduced)
 
         optimizer.zero_grad()
@@ -122,6 +131,7 @@ def train(cfg, local_rank, distributed, logger):
         with amp.scale_loss(losses, optimizer) as scaled_losses:
             scaled_losses.backward()
         optimizer.step()
+        wandb.log({"lr": optimizer.param_groups[0]['lr']})
 
         batch_time = time.time() - end
         end = time.time()
@@ -129,8 +139,9 @@ def train(cfg, local_rank, distributed, logger):
 
         eta_seconds = meters.time.global_avg * (max_iter - iteration)
         eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-
-        if iteration % 200 == 0 or iteration == max_iter:
+        
+        # Changed from 200 to 100
+        if iteration % 100 == 0 or iteration == max_iter:
             logger.info(
                 meters.delimiter.join(
                     [
@@ -149,14 +160,27 @@ def train(cfg, local_rank, distributed, logger):
                 )
             )
 
-        if cfg.SOLVER.TO_VAL and iteration % cfg.SOLVER.VAL_PERIOD == 0:
-            logger.info("Start validating")
-            run_val(cfg, model, val_data_loaders, distributed)
-
         if iteration % checkpoint_period == 0:
             checkpointer.save("model_{:07d}".format(iteration), **arguments)
         if iteration == max_iter:
             checkpointer.save("model_final", **arguments)
+            
+        val_result = None # used for scheduler updating
+        if cfg.SOLVER.TO_VAL and iteration % cfg.SOLVER.VAL_PERIOD == 0:
+            logger.info("Start validating")
+            val_result = run_val(cfg, model, val_data_loaders, distributed)
+            logger.info("Validation Result: %.4f" % val_result)
+            wandb.log({"val result": val_result})
+
+        # scheduler should be called after optimizer.step() in pytorch>=1.1.0
+        # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+        if cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau":
+            scheduler.step(val_result, epoch=iteration)
+            if scheduler.stage_count >= cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP:
+                logger.info("Trigger MAX_DECAY_STEP at iteration {}.".format(iteration))
+                break
+        else:
+            scheduler.step()
 
     total_training_time = time.time() - start_training_time
     total_time_str = str(datetime.timedelta(seconds=total_training_time))
@@ -239,6 +263,16 @@ def run_test(cfg, model, distributed):
             output_folder=output_folder,
         )
         synchronize()
+        val_result.append(dataset_result)
+    # support for multi gpu distributed testing
+    gathered_result = all_gather(torch.tensor(dataset_result).cpu())
+    gathered_result = [t.view(-1) for t in gathered_result]
+    gathered_result = torch.cat(gathered_result, dim=-1).view(-1)
+    valid_result = gathered_result[gathered_result>=0]
+    val_result = float(valid_result.mean())
+    del gathered_result, valid_result
+    torch.cuda.empty_cache()
+    return val_result
 
 
 def main():

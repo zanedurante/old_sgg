@@ -7,7 +7,8 @@ import copy
 
 class DatasetCatalog(object):
     #DATA_DIR = "/home/users/alatif/data/ImageCorpora/"
-    DATA_DIR = "/media/rafi/Samsung_T5/_DATASETS/"
+    #DATA_DIR = "/media/rafi/Samsung_T5/_DATASETS/"
+    DATA_DIR = "/home/zaned/sgg/Scene-Graph-Benchmark.pytorch/datasets/"
     DATASETS = {
         "coco_2017_train": {
             "img_dir": "coco/train2017",
@@ -119,6 +120,9 @@ class DatasetCatalog(object):
             "image_file": "vg/image_data.json",
             "capgraphs_file": "vg/vg_capgraphs_anno.json",
         },
+        "moma": {
+            "moma_path": "moma/",
+        }
     }
 
     @staticmethod
@@ -164,6 +168,26 @@ class DatasetCatalog(object):
             args['custom_path'] = cfg.TEST.CUSTUM_PATH
             return dict(
                 factory="VGDataset",
+                args=args,
+            )
+        elif "moma" in name:
+            p = name.rfind("_")
+            name, split = name[:p], name[p+1:]
+            assert name in DatasetCatalog.DATASETS and split in {'train', 'val', 'test'}
+            data_dir = DatasetCatalog.DATA_DIR
+            args = copy.deepcopy(DatasetCatalog.DATASETS[name])
+            for k, v in args.items():
+                args[k] = os.path.join(data_dir, v)
+            args['split'] = split
+            # IF MODEL.RELATION_ON is True, filter images with empty rels
+            # else set filter to False, because we need all images for pretraining detector
+            args['filter_non_overlap'] = (not cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX) and cfg.MODEL.RELATION_ON and cfg.MODEL.ROI_RELATION_HEAD.REQUIRE_BOX_OVERLAP
+            args['filter_empty_rels'] = cfg.MODEL.RELATION_ON
+            args['flip_aug'] = cfg.MODEL.FLIP_AUG
+            args['custom_eval'] = cfg.TEST.CUSTUM_EVAL
+            args['custom_path'] = cfg.TEST.CUSTUM_PATH
+            return dict(
+                factory="MOMADataset",
                 args=args,
             )
 
